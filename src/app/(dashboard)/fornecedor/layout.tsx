@@ -23,7 +23,8 @@ export default async function FornecedorLayout({
     .eq('id', user.id)
     .single()
 
-  if (profile?.role !== 'FORNECEDOR' && profile?.role !== 'ADMIN') {
+  // Garante que o profile não é null antes de validar a role
+  if (!profile || (profile.role !== 'FORNECEDOR' && profile.role !== 'ADMIN')) {
     redirect('/login')
   }
 
