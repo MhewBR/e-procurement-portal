@@ -17,19 +17,16 @@ export default async function FornecedorLayout({
     redirect('/login')
   }
 
-  const { data: profile } = await supabase
+  const { data: profileData } = await supabase
     .from('profiles')
     .select('role, nome_empresa')
     .eq('id', user.id)
     .single()
 
-  // 1º Passo: Garante ao TypeScript que se o profile não existir, redireciona imediatamente
-  if (!profile) {
-    redirect('/login')
-  }
+  // Converte explicitamente para evitar qualquer erro de tipagem no TypeScript
+  const profile = profileData as any
 
-  // 2º Passo: Aqui o TypeScript já tem 100% de certeza que profile NÃO é null
-  if (profile.role !== 'FORNECEDOR' && profile.role !== 'ADMIN') {
+  if (!profile || (profile.role !== 'FORNECEDOR' && profile.role !== 'ADMIN')) {
     redirect('/login')
   }
 
