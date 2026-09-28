@@ -23,8 +23,13 @@ export default async function FornecedorLayout({
     .eq('id', user.id)
     .single()
 
-  // Garante que o profile não é null antes de validar a role
-  if (!profile || (profile.role !== 'FORNECEDOR' && profile.role !== 'ADMIN')) {
+  // 1º Passo: Garante ao TypeScript que se o profile não existir, redireciona imediatamente
+  if (!profile) {
+    redirect('/login')
+  }
+
+  // 2º Passo: Aqui o TypeScript já tem 100% de certeza que profile NÃO é null
+  if (profile.role !== 'FORNECEDOR' && profile.role !== 'ADMIN') {
     redirect('/login')
   }
 
