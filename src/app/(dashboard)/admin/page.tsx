@@ -75,7 +75,11 @@ export default async function AdminDashboard() {
                       <td className="p-4 font-medium text-gray-900">{d.titulo}</td>
                       <td className="p-4 text-gray-700">{new Date(d.data_limite).toLocaleDateString('pt-BR')}</td>
                       <td className="p-4 text-center">
-                        <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${
+                          fornecedoresUnicos > 0 
+                            ? 'bg-green-100 text-green-800 border-green-200' 
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
+                        }`}>
                           {fornecedoresUnicos === 0 
                             ? 'Sem propostas' 
                             : `${fornecedoresUnicos} ${fornecedoresUnicos === 1 ? 'Fornecedor' : 'Fornecedores'}`}
