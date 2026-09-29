@@ -17,7 +17,7 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
   const router = useRouter()
 
   const loadData = async () => {
-    // 1. VERIFICAÇÃO DE SEGURANÇA: Exige perfil ADMIN
+    // 1. VERIFICAÇÃO DE SEGURANÇA
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/login')
@@ -30,7 +30,6 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
       .eq('id', user.id)
       .single()
 
-    // Se o usuário não for ADMIN, expulsa para a tela de fornecedor
     if (profile?.role !== 'ADMIN') {
       router.push('/fornecedor')
       return
@@ -57,37 +56,30 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
 
   useEffect(() => { loadData() }, [demandaId])
 
-  // Aprovar Vencedor
-  const handleAprovarVencedor = async (propostaId: string) => {
-    if (!confirm('Tem certeza que deseja escolher esta proposta como vencedora e iniciar o contrato?')) return
+  // --- ALTERADO: Aprovar Vencedor sem encerrar a cotação ---
+  const handleAprovarVencedor = async (proposta: any) => {
+    // Pergunta qual a quantidade a aprovar (sugere a quantidade total da proposta ou o que falta da demanda)
+    const qtdOferta = proposta.quantidade_disponivel || demanda.quantidade
+    const confirmacao = confirm(`Deseja aprovar a proposta da ${proposta.profiles?.nome_empresa}?\nA cotação continuará aberta para que possa aprovar outros fornecedores se necessário.`)
+    
+    if (!confirmacao) return
 
     setSubmitting(true)
     try {
-      await supabase
-        .from('propostas')
-        .update({ vencedora: false, status_contrato: null })
-        .eq('demanda_id', demandaId)
-
+      // Atualiza apenas a proposta específica para vencedora
       const { error: winnerError } = await supabase
         .from('propostas')
         .update({
           vencedora: true,
-          status_contrato: 'ATIVO',
-          quantidade_disponivel: demanda.quantidade
+          status_contrato: 'ATIVO'
+          // quantidade_disponivel já deve vir preenchida da proposta, mas se quiser pode forçar aqui
         })
-        .eq('id', propostaId)
+        .eq('id', proposta.id)
 
       if (winnerError) throw winnerError
 
-      const { error: demandaError } = await supabase
-        .from('demandas')
-        .update({ status: 'CONCLUIDA' })
-        .eq('id', demandaId)
-
-      if (demandaError) throw demandaError
-
-      alert('Proposta aprovada com sucesso!')
-      router.push('/admin/contratos')
+      alert('Proposta aprovada com sucesso! Você pode aprovar mais propostas ou encerrar a cotação no topo da página.')
+      await loadData() // Recarrega os dados para mostrar o "✓ Vencedor"
       router.refresh()
     } catch (err: any) {
       alert(err.message || 'Erro ao aprovar proposta.')
@@ -96,9 +88,41 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
     }
   }
 
+  // --- NOVO: Botão explícito para Encerrar a Cotação ---
+  const handleEncerrarDemanda = async () => {
+    const vencedores = propostas.filter(p => p.vencedora)
+    
+    let mensagem = 'Tem certeza que deseja ENCERRAR esta cotação definitivamente?'
+    if (vencedores.length === 0) {
+      mensagem += '\n\nATENÇÃO: Você não aprovou nenhum vencedor. Se encerrar agora, a cotação será finalizada sem contratos ativos.'
+    } else {
+      mensagem += `\n\nVocê aprovou ${vencedores.length} fornecedor(es) para esta cotação.`
+    }
+
+    if (!confirm(mensagem)) return
+
+    setSubmitting(true)
+    try {
+      const { error: demandaError } = await supabase
+        .from('demandas')
+        .update({ status: 'CONCLUIDA' })
+        .eq('id', demandaId)
+
+      if (demandaError) throw demandaError
+
+      alert('Cotação encerrada com sucesso!')
+      router.push('/admin/contratos')
+      router.refresh()
+    } catch (err: any) {
+      alert(err.message || 'Erro ao encerrar cotação.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   // Reativar Cotação
   const handleReativarDemanda = async () => {
-    if (!confirm('Deseja reabrir esta cotação? O contrato atual será cancelado e a cotação voltará para ABERTA.')) return
+    if (!confirm('Deseja reabrir esta cotação? Os contratos atuais serão mantidos, mas a cotação voltará a receber propostas.')) return
 
     setSubmitting(true)
     try {
@@ -108,13 +132,6 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
         .eq('id', demandaId)
 
       if (demErr) throw demErr
-
-      const { error: propErr } = await supabase
-        .from('propostas')
-        .update({ vencedora: false, status_contrato: null })
-        .eq('demanda_id', demandaId)
-
-      if (propErr) throw propErr
 
       alert('Cotação reaberta com sucesso!')
       await loadData()
@@ -128,10 +145,16 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
 
   // Cancelar Cotação
   const handleCancelarDemanda = async () => {
-    if (!confirm('Atenção: Confirma o cancelamento definitivo desta cotação?')) return
+    if (!confirm('Atenção: Confirma o cancelamento definitivo desta cotação? Todas as propostas (mesmo as vencedoras) ficarão invalidadas.')) return
 
     setSubmitting(true)
     try {
+      // Ao cancelar a demanda, cancelamos os contratos associados
+      await supabase
+        .from('propostas')
+        .update({ vencedora: false, status_contrato: 'CANCELADO' })
+        .eq('demanda_id', demandaId)
+
       const { error } = await supabase
         .from('demandas')
         .update({ status: 'CANCELADA' })
@@ -175,14 +198,19 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
           </div>
 
           <div className="flex gap-3">
-            <Link href="/admin" className="px-4 py-2 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition">
+            <Link href="/admin" className="px-4 py-2 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition shadow-sm">
               Voltar
             </Link>
 
             {demanda?.status === 'ABERTA' && (
-              <button onClick={handleCancelarDemanda} disabled={submitting} className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50">
-                Cancelar Cotação
-              </button>
+              <>
+                <button onClick={handleCancelarDemanda} disabled={submitting} className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50 shadow-sm">
+                  Cancelar Cotação
+                </button>
+                <button onClick={handleEncerrarDemanda} disabled={submitting} className="px-4 py-2 text-xs font-bold rounded-lg bg-blue-700 hover:bg-blue-800 text-white transition disabled:opacity-50 shadow-sm uppercase">
+                  Encerrar Cotação
+                </button>
+              </>
             )}
 
             {(demanda?.status === 'CONCLUIDA' || demanda?.status === 'CANCELADA') && (
@@ -261,16 +289,22 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
                     </td>
                     <td className="p-3 text-center">
                       {demanda?.status === 'ABERTA' ? (
-                        <button
-                          onClick={() => handleAprovarVencedor(p.id)}
-                          disabled={submitting}
-                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-green-700 hover:bg-green-800 text-white transition shadow-sm uppercase disabled:opacity-50"
-                        >
-                          Aprovar Vencedor
-                        </button>
+                        !p.vencedora ? (
+                          <button
+                            onClick={() => handleAprovarVencedor(p)}
+                            disabled={submitting}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-green-700 hover:bg-green-800 text-white transition shadow-sm uppercase disabled:opacity-50"
+                          >
+                            Aprovar Vencedor
+                          </button>
+                        ) : (
+                          <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200 inline-flex items-center gap-1">
+                            <span>✓ Aprovado</span>
+                          </span>
+                        )
                       ) : p.vencedora ? (
-                        <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200">
-                          ✓ Vencedor
+                        <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200 inline-flex items-center gap-1">
+                          <span>✓ Vencedor Definitivo</span>
                         </span>
                       ) : (
                         <span className="text-xs text-gray-400">-</span>
