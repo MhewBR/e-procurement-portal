@@ -56,30 +56,26 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
 
   useEffect(() => { loadData() }, [demandaId])
 
-  // --- ALTERADO: Aprovar Vencedor sem encerrar a cotação ---
+  // Aprovar Vencedor sem encerrar a cotação
   const handleAprovarVencedor = async (proposta: any) => {
-    // Pergunta qual a quantidade a aprovar (sugere a quantidade total da proposta ou o que falta da demanda)
-    const qtdOferta = proposta.quantidade_disponivel || demanda.quantidade
     const confirmacao = confirm(`Deseja aprovar a proposta da ${proposta.profiles?.nome_empresa}?\nA cotação continuará aberta para que possa aprovar outros fornecedores se necessário.`)
     
     if (!confirmacao) return
 
     setSubmitting(true)
     try {
-      // Atualiza apenas a proposta específica para vencedora
       const { error: winnerError } = await supabase
         .from('propostas')
         .update({
           vencedora: true,
           status_contrato: 'ATIVO'
-          // quantidade_disponivel já deve vir preenchida da proposta, mas se quiser pode forçar aqui
         })
         .eq('id', proposta.id)
 
       if (winnerError) throw winnerError
 
       alert('Proposta aprovada com sucesso! Você pode aprovar mais propostas ou encerrar a cotação no topo da página.')
-      await loadData() // Recarrega os dados para mostrar o "✓ Vencedor"
+      await loadData()
       router.refresh()
     } catch (err: any) {
       alert(err.message || 'Erro ao aprovar proposta.')
@@ -88,7 +84,7 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
     }
   }
 
-  // --- NOVO: Botão explícito para Encerrar a Cotação ---
+  // Botão explícito para Encerrar a Cotação
   const handleEncerrarDemanda = async () => {
     const vencedores = propostas.filter(p => p.vencedora)
     
@@ -149,7 +145,6 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
 
     setSubmitting(true)
     try {
-      // Ao cancelar a demanda, cancelamos os contratos associados
       await supabase
         .from('propostas')
         .update({ vencedora: false, status_contrato: 'CANCELADO' })
@@ -267,7 +262,19 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
               <tbody className="divide-y divide-gray-200 text-sm">
                 {propostas.map((p) => (
                   <tr key={p.id} className={`hover:bg-gray-50 transition ${p.vencedora ? 'bg-green-50/80' : ''}`}>
-                    <td className="p-3 font-semibold text-gray-900">{p.profiles?.nome_empresa}</td>
+                    <td className="p-3">
+                      <div className="font-semibold text-gray-900">{p.profiles?.nome_empresa}</div>
+                      {/* CNPJ DE FATURAMENTO (Ajuste p.cnpj_faturamento se o nome for diferente no BD) */}
+                      {p.cnpj_faturamento && (
+                        <div className="text-[10px] text-gray-500 mt-0.5">CNPJ Fat: {p.cnpj_faturamento}</div>
+                      )}
+                      {/* OBSERVAÇÃO DO FORNECEDOR */}
+                      {p.observacao && (
+                        <div className="text-[10px] text-gray-500 italic mt-1 bg-gray-100 p-1.5 rounded" title={p.observacao}>
+                          Obs: {p.observacao}
+                        </div>
+                      )}
+                    </td>
                     <td className="p-3 font-bold text-green-700">
                       {p.moeda === 'USD' ? 'US$ ' : 'R$ '}{Number(p.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </td>
@@ -282,7 +289,7 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
                     </td>
                     <td className="p-3 text-center">
                       {p.pdf_url ? (
-                        <a href={p.pdf_url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-200 hover:bg-blue-100">
+                        <a href={p.pdf_url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-200 hover:bg-blue-100 whitespace-nowrap">
                           📄 Ver PDF
                         </a>
                       ) : '-'}
@@ -293,17 +300,17 @@ export default function AdminDetalhesDemandaPage({ params }: { params: Promise<{
                           <button
                             onClick={() => handleAprovarVencedor(p)}
                             disabled={submitting}
-                            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-green-700 hover:bg-green-800 text-white transition shadow-sm uppercase disabled:opacity-50"
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-green-700 hover:bg-green-800 text-white transition shadow-sm uppercase disabled:opacity-50 whitespace-nowrap"
                           >
                             Aprovar Vencedor
                           </button>
                         ) : (
-                          <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200 inline-flex items-center gap-1">
+                          <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200 inline-flex items-center gap-1 whitespace-nowrap">
                             <span>✓ Aprovado</span>
                           </span>
                         )
                       ) : p.vencedora ? (
-                        <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200 inline-flex items-center gap-1">
+                        <span className="text-xs font-bold text-green-800 bg-green-100 px-2 py-1 rounded-full border border-green-200 inline-flex items-center gap-1 whitespace-nowrap">
                           <span>✓ Vencedor Definitivo</span>
                         </span>
                       ) : (
