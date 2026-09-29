@@ -13,9 +13,9 @@ export default function IndicadoresBIPage() {
   const supabase = createClient()
 
   const loadBI = async () => {
-    // 1. Busca todas as demandas e propostas
+    // 1. Busca todas as demandas e propostas incluindo id, status e quantidade de demandas
     const { data: demandas } = await supabase.from('demandas').select('*, propostas(*, profiles:fornecedor_id(nome_empresa))')
-    const { data: propostas } = await supabase.from('propostas').select('*, demandas(titulo), profiles:fornecedor_id(nome_empresa)')
+    const { data: propostas } = await supabase.from('propostas').select('*, demandas(id, titulo, status, quantidade), profiles:fornecedor_id(nome_empresa)')
     const { data: abatimentos } = await supabase.from('contrato_abatimentos').select('*')
 
     let totalCotacoes = demandas?.length || 0
@@ -33,7 +33,9 @@ export default function IndicadoresBIPage() {
 
     propostas?.forEach((p: any) => {
       const isVencedora = p.vencedora
-      const isAtivo = p.status_contrato === 'ATIVO' && p.demandas?.status === 'CONCLUIDA'
+      // Contrato está ativo se for marcado como vencedor e status_contrato for 'ATIVO'
+      const isAtivo = p.vencedora && p.status_contrato === 'ATIVO'
+      
       const valorUnitario = Number(p.valor_total || 0)
       const qtdContratada = Number(p.quantidade_disponivel || p.demandas?.quantidade || 0)
       const valorTotalContrato = valorUnitario * (qtdContratada || 1)
@@ -70,18 +72,12 @@ export default function IndicadoresBIPage() {
     // Regra: (Maior Preço Unitário - Preço Unitário Vencedor) * Quantidade Fechada
     demandas?.forEach(d => {
       if (d.propostas && d.propostas.length > 0) {
-        // Encontra o MAIOR preço unitário cotado para esta demanda
         const maiorPrecoUnitario = Math.max(...d.propostas.map((p: any) => Number(p.valor_total || 0)))
-
-        // Filtra todas as propostas marcadas como vencedoras nesta demanda
         const vencedoras = d.propostas.filter((p: any) => p.vencedora)
 
         vencedoras.forEach((vencedora: any) => {
           const precoVencedor = Number(vencedora.valor_total || 0)
-          
-          // Pega a quantidade fechada com este vencedor
           const qtdFechada = Number(vencedora.quantidade_disponivel || d.quantidade || 0)
-
           const diferencaUnitarias = maiorPrecoUnitario - precoVencedor
 
           if (diferencaUnitarias > 0 && qtdFechada > 0) {
