@@ -137,7 +137,20 @@ export default function FornecedorContratosPage() {
                       <td className="px-4 py-3 font-bold text-green-700">
                         {c.moeda === 'USD' ? 'US$ ' : 'R$ '}{Number(c.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-4 py-3 text-center space-x-2">
+                        {/* BOTÃO PARA O FORNECEDOR BAIXAR O PEDIDO DE COMPRA */}
+                        {c.pedido_compra_url && (
+                          <a
+                            href={c.pedido_compra_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-3 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-800 text-white shadow-sm inline-flex items-center gap-1 uppercase tracking-wider"
+                          >
+                            📥 Pedido de Compras
+                          </a>
+                        )}
+
                         <button onClick={(e) => { e.stopPropagation(); handleStop(c.id); }} className="px-3 py-1 text-[10px] font-bold rounded bg-red-600 hover:bg-red-700 text-white shadow-sm uppercase tracking-wider">
                           Pausar / STOP
                         </button>
@@ -147,8 +160,30 @@ export default function FornecedorContratosPage() {
                     {expandedRow === c.id && (
                       <tr className="bg-gray-50 border-b border-gray-200">
                         <td colSpan={6} className="p-6">
+                          
+                          {/* CARD DE DESTAQUE DO PEDIDO DE COMPRA (SE EXISTIR) */}
+                          {c.pedido_compra_url && (
+                            <div className="mb-6 p-4 bg-blue-50/80 border border-blue-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                <h5 className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+                                  <span>📄</span> Pedido de Compras Disponível
+                                </h5>
+                                <p className="text-xs text-blue-700 mt-0.5">
+                                  A Fortgreen disponibilizou o Pedido de Compras referente a este contrato.
+                                </p>
+                              </div>
+                              <a
+                                href={c.pedido_compra_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2 text-xs font-bold bg-blue-700 hover:bg-blue-800 text-white rounded-lg transition shadow-sm flex items-center gap-1.5 whitespace-nowrap"
+                              >
+                                📥 Baixar Pedido (PDF)
+                              </a>
+                            </div>
+                          )}
+
                           <div className="flex flex-col md:flex-row gap-8">
-                            
                             <div className="flex-1 bg-white p-4 rounded-xl shadow-sm border border-gray-200 h-fit">
                               <h4 className="font-semibold text-gray-800 mb-4 text-sm">Enviar Nota Fiscal</h4>
                               <form onSubmit={(e) => handleAbater(e, c.id)} className="space-y-4">
