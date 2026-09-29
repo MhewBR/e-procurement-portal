@@ -13,10 +13,15 @@ export default function IndicadoresBIPage() {
   const supabase = createClient()
 
   const loadBI = async () => {
-    // 1. Busca todas as demandas e propostas incluindo id, status e quantidade de demandas
-    const { data: demandas } = await supabase.from('demandas').select('*, propostas(*, profiles:fornecedor_id(nome_empresa))')
-    const { data: propostas } = await supabase.from('propostas').select('*, demandas(id, titulo, status, quantidade), profiles:fornecedor_id(nome_empresa)')
-    const { data: abatimentos } = await supabase.from('contrato_abatimentos').select('*')
+    // Busca apenas o status das demandas para contagem rápida
+    const { data: demandas } = await supabase.from('demandas').select('id, status')
+    
+    // Busca as propostas COM o histórico de abatimentos (NFs) para sabermos a quantidade original
+    const { data: propostas } = await supabase
+      .from('propostas')
+      .select('*, demandas(id, titulo, status, quantidade), profiles:fornecedor_id(nome_empresa), contrato_abatimentos(quantidade, status_nf)')
+    
+    const { data: abatimentos } = await supabase.from('contrato_abatimentos').select('nf_url')
 
     let totalCotacoes = demandas?.length || 0
     let totalAbertas = demandas?.filter(d => d.status === 'ABERTA').length || 0
@@ -31,26 +36,61 @@ export default function IndicadoresBIPage() {
     const fornecedorMap: Record<string, { nome: string; contratos: number; totalBRL: number }> = {}
     const exportList: any[] = []
 
+    // 1. Encontra o MAIOR preço unitário orçado para CADA demanda
+    const maiorPrecoPorDemanda: Record<string, number> = {}
+    propostas?.forEach((p: any) => {
+      const dId = p.demanda_id
+      const preco = Number(p.valor_total || 0)
+      if (!maiorPrecoPorDemanda[dId] || preco > maiorPrecoPorDemanda[dId]) {
+        maiorPrecoPorDemanda[dId] = preco
+      }
+    })
+
+    // 2. Calcula Volume Ativo (pelo Saldo Restante) e Saving (pelo Saldo Original)
     propostas?.forEach((p: any) => {
       const isVencedora = p.vencedora
-      // Contrato está ativo se for marcado como vencedor e status_contrato for 'ATIVO'
       const isAtivo = p.vencedora && p.status_contrato === 'ATIVO'
       
       const valorUnitario = Number(p.valor_total || 0)
-      const qtdContratada = Number(p.quantidade_disponivel || p.demandas?.quantidade || 0)
-      const valorTotalContrato = valorUnitario * (qtdContratada || 1)
+      const saldoRestante = Number(p.quantidade_disponivel || p.demandas?.quantidade || 0)
+      
+      // Reconstrói a quantidade inicial somando o saldo restante com as baixas/NFs já ocorridas
+      let qtdJaEntregue = 0
+      if (p.contrato_abatimentos) {
+        p.contrato_abatimentos.forEach((ab: any) => {
+          if (ab.status_nf !== 'RECUSADA') {
+            qtdJaEntregue += Number(ab.quantidade || 0)
+          }
+        })
+      }
+      const qtdOriginalContratada = saldoRestante + qtdJaEntregue
 
-      if (isAtivo) {
-        if (p.moeda === 'USD') volumeAtivoUSD += valorTotalContrato
-        else volumeAtivoBRL += valorTotalContrato
+      // O volume financeiro pendente na rua (baseado APENAS no que falta entregar)
+      const volumePendenteCalculado = saldoRestante === 0 ? 0 : valorUnitario * saldoRestante
 
-        // Agrupa por fornecedor
+      if (isAtivo && saldoRestante > 0) {
+        if (p.moeda === 'USD') volumeAtivoUSD += volumePendenteCalculado
+        else volumeAtivoBRL += volumePendenteCalculado
+
+        // Agrupa por fornecedor para o Top 5
         const fNome = p.profiles?.nome_empresa || 'Desconhecido'
         if (!fornecedorMap[fNome]) {
           fornecedorMap[fNome] = { nome: fNome, contratos: 0, totalBRL: 0 }
         }
         fornecedorMap[fNome].contratos += 1
-        fornecedorMap[fNome].totalBRL += p.moeda === 'USD' ? valorTotalContrato * 5.6 : valorTotalContrato
+        fornecedorMap[fNome].totalBRL += p.moeda === 'USD' ? volumePendenteCalculado * 5.6 : volumePendenteCalculado
+      }
+
+      // CÁLCULO DO SAVING HISTÓRICO (Baseado na Quantidade Original Fechada)
+      if (isVencedora) {
+        const maiorPreco = maiorPrecoPorDemanda[p.demanda_id] || valorUnitario
+        const diferencaUnitarias = maiorPreco - valorUnitario
+
+        if (diferencaUnitarias > 0 && qtdOriginalContratada > 0) {
+          const economiaTotal = diferencaUnitarias * qtdOriginalContratada
+          if (p.moeda === 'USD') totalSavingUSD += economiaTotal
+          else totalSavingBRL += economiaTotal
+        }
       }
 
       // Lista para exportação geral em Excel
@@ -59,38 +99,14 @@ export default function IndicadoresBIPage() {
         'Fornecedor': p.profiles?.nome_empresa || '-',
         'Moeda': p.moeda || 'BRL',
         'Valor Unitário Proposto': valorUnitario,
-        'Quantidade Contratada': qtdContratada,
-        'Valor Total Estimado': valorTotalContrato,
+        'Quantidade Contratada Inicial': qtdOriginalContratada,
+        'Saldo Restante Atual': saldoRestante,
+        'Volume Financeiro Restante': volumePendenteCalculado,
         'Vencedora': isVencedora ? 'SIM' : 'NÃO',
         'Status Contrato': p.status_contrato || 'N/A',
         'Tipo Frete': p.tipo_frete || '-',
         'Cond. Pagamento': p.condicao_pagamento || '-'
       })
-    })
-
-    // --- CÁLCULO DE SAVING CORRIGIDO ---
-    // Regra: (Maior Preço Unitário - Preço Unitário Vencedor) * Quantidade Fechada
-    demandas?.forEach(d => {
-      if (d.propostas && d.propostas.length > 0) {
-        const maiorPrecoUnitario = Math.max(...d.propostas.map((p: any) => Number(p.valor_total || 0)))
-        const vencedoras = d.propostas.filter((p: any) => p.vencedora)
-
-        vencedoras.forEach((vencedora: any) => {
-          const precoVencedor = Number(vencedora.valor_total || 0)
-          const qtdFechada = Number(vencedora.quantidade_disponivel || d.quantidade || 0)
-          const diferencaUnitarias = maiorPrecoUnitario - precoVencedor
-
-          if (diferencaUnitarias > 0 && qtdFechada > 0) {
-            const economiaTotal = diferencaUnitarias * qtdFechada
-
-            if (vencedora.moeda === 'USD') {
-              totalSavingUSD += economiaTotal
-            } else {
-              totalSavingBRL += economiaTotal
-            }
-          }
-        })
-      }
     })
 
     const topArr = Object.values(fornecedorMap).sort((a, b) => b.totalBRL - a.totalBRL).slice(0, 5)
@@ -164,17 +180,18 @@ export default function IndicadoresBIPage() {
               <p className="text-2xl font-black text-gray-400 mt-2">R$ 0,00</p>
             )}
 
-            <span className="text-[10px] text-gray-400 mt-1 block">Calculado sobre a quantidade fechada vs. maior proposta</span>
+            <span className="text-[10px] text-gray-400 mt-1 block">Preservado pelo total contratado inicialmente</span>
           </div>
 
           <div className="bg-white/95 backdrop-blur-md p-5 rounded-xl border border-white/20 shadow-xl">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Volume em Contratos Ativos</span>
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Backlog em Contratos</span>
             <p className="text-xl font-bold text-blue-900 mt-2">
               R$ {metrics?.volumeAtivoBRL?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
             <p className="text-sm font-semibold text-blue-700">
               US$ {metrics?.volumeAtivoUSD?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
+            <span className="text-[10px] text-gray-400 mt-1 block">Valor financeiro que ainda falta ser entregue</span>
           </div>
 
           <div className="bg-white/95 backdrop-blur-md p-5 rounded-xl border border-white/20 shadow-xl">
@@ -196,7 +213,7 @@ export default function IndicadoresBIPage() {
 
         {/* Tabela de Top Fornecedores */}
         <div className="bg-white/95 backdrop-blur-md rounded-xl shadow-2xl border border-white/20 overflow-hidden p-6">
-          <h3 className="text-base font-bold text-gray-800 mb-4">Top Fornecedores por Volume em Contratos</h3>
+          <h3 className="text-base font-bold text-gray-800 mb-4">Top Fornecedores por Backlog Restante</h3>
           
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -205,7 +222,7 @@ export default function IndicadoresBIPage() {
                   <th className="p-3">Posição</th>
                   <th className="p-3">Fornecedor</th>
                   <th className="p-3 text-center">Contratos Ativos</th>
-                  <th className="p-3 text-right">Volume Aprox. (BRL)</th>
+                  <th className="p-3 text-right">Volume Restante (BRL)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 text-sm">
@@ -220,7 +237,7 @@ export default function IndicadoresBIPage() {
                   </tr>
                 ))}
                 {topFornecedores.length === 0 && (
-                  <tr><td colSpan={4} className="p-4 text-center text-gray-500">Nenhum contrato ativo registado.</td></tr>
+                  <tr><td colSpan={4} className="p-4 text-center text-gray-500">Nenhum volume financeiro restante registado.</td></tr>
                 )}
               </tbody>
             </table>
