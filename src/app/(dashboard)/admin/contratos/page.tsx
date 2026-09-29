@@ -18,6 +18,7 @@ export default function AdminContratosPage() {
   const [selectedAbatimentoId, setSelectedAbatimentoId] = useState<string | null>(null)
   const [recusaFile, setRecusaFile] = useState<File | null>(null)
   const [recusando, setRecusando] = useState(false)
+  const [uploadingPedidoId, setUploadingPedidoId] = useState<string | null>(null)
 
   const supabase = createClient()
 
@@ -46,6 +47,53 @@ export default function AdminContratosPage() {
 
   useEffect(() => { loadData() }, [])
 
+  // --- FUNÇÃO PARA ANEXAR / SUBSTITUIR PEDIDO DE COMPRAS ---
+  const handleUploadPedido = async (propostaId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    if (file.type !== 'application/pdf') {
+      alert('Por favor, selecione um arquivo no formato PDF.')
+      return
+    }
+
+    setUploadingPedidoId(propostaId)
+    try {
+      const fileExt = file.name.split('.').pop()
+      const filePath = `pedidos/${propostaId}_${Date.now()}.${fileExt}`
+
+      // 1. Tenta fazer upload no bucket 'pedidos' (ou fallback para 'notas-fiscais')
+      let bucketName = 'pedidos'
+      let { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, file, { upsert: true })
+
+      if (uploadError) {
+        // Fallback caso o bucket 'pedidos' não exista
+        bucketName = 'notas-fiscais'
+        const fallback = await supabase.storage.from(bucketName).upload(filePath, file, { upsert: true })
+        if (fallback.error) throw new Error('Erro ao enviar o arquivo PDF.')
+      }
+
+      // 2. Pega a URL pública do arquivo
+      const { data: urlData } = supabase.storage.from(bucketName).getPublicUrl(filePath)
+      const publicUrl = urlData.publicUrl
+
+      // 3. Salva a URL no registro da proposta
+      const { error: dbError } = await supabase
+        .from('propostas')
+        .update({ pedido_compra_url: publicUrl })
+        .eq('id', propostaId)
+
+      if (dbError) throw dbError
+
+      alert('Pedido de Compras anexado com sucesso!')
+      await loadData()
+    } catch (err: any) {
+      alert(err.message || 'Erro ao anexar o pedido de compras.')
+    } finally {
+      setUploadingPedidoId(null)
+    }
+  }
+
   const handleQtdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/[^0-9,]/g, '')
     const parts = value.split(',')
@@ -55,7 +103,7 @@ export default function AdminContratosPage() {
   }
 
   const handlePausarAdmin = async (propostaId: string) => {
-    if (!confirm('Atenção: Ao pausar este contrato, ele sairá da lista de ativos para você e para o fornecedor, indo para Finalizados. Confirms?')) return
+    if (!confirm('Atenção: Ao pausar este contrato, ele sairá da lista de ativos para você e para o fornecedor, indo para Finalizados. Confirma?')) return
     try {
       const res = await fetch('/api/admin/contratos/status', {
         method: 'POST',
@@ -197,13 +245,53 @@ export default function AdminContratosPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-center space-x-2">
+                        {/* BOTÃO PEDIDO DE COMPRA */}
+                        {p.pedido_compra_url ? (
+                          <div className="inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                            <a
+                              href={p.pedido_compra_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition shadow-sm inline-flex items-center gap-1"
+                            >
+                              📄 Pedido
+                            </a>
+                            <label className="cursor-pointer text-[10px] text-gray-500 hover:text-gray-800 underline px-1">
+                              {uploadingPedidoId === p.id ? 'A enviar...' : 'Trocar'}
+                              <input
+                                type="file"
+                                accept=".pdf"
+                                className="hidden"
+                                disabled={uploadingPedidoId === p.id}
+                                onChange={(e) => handleUploadPedido(p.id, e)}
+                              />
+                            </label>
+                          </div>
+                        ) : (
+                          <label
+                            onClick={e => e.stopPropagation()}
+                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-800 hover:bg-blue-900 text-white transition shadow-sm cursor-pointer inline-flex items-center gap-1 ${
+                              uploadingPedidoId === p.id ? 'opacity-50 cursor-wait' : ''
+                            }`}
+                          >
+                            📎 {uploadingPedidoId === p.id ? 'Anexando...' : 'Anexar Pedido'}
+                            <input
+                              type="file"
+                              accept=".pdf"
+                              className="hidden"
+                              disabled={uploadingPedidoId === p.id}
+                              onChange={(e) => handleUploadPedido(p.id, e)}
+                            />
+                          </label>
+                        )}
+
                         <button
                           onClick={(e) => { e.stopPropagation(); handlePausarAdmin(p.id); }}
                           className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-red-600 hover:bg-red-700 text-white transition shadow-sm uppercase"
                         >
                           Pausar / STOP
                         </button>
-                        <Link href={`/admin/demandas/${p.demandas.id}`} className="px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-slate-700 text-white hover:bg-slate-800 transition shadow-sm" onClick={e => e.stopPropagation()}>
+                        <Link href={`/admin/demandas/${p.demandas.id}`} className="px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-slate-700 text-white hover:bg-slate-800 transition shadow-sm inline-block" onClick={e => e.stopPropagation()}>
                           Ver Cotação
                         </Link>
                       </td>
