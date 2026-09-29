@@ -34,11 +34,13 @@ export default function IndicadoresBIPage() {
     propostas?.forEach((p: any) => {
       const isVencedora = p.vencedora
       const isAtivo = p.status_contrato === 'ATIVO' && p.demandas?.status === 'CONCLUIDA'
-      const valor = Number(p.valor_total || 0)
+      const valorUnitario = Number(p.valor_total || 0)
+      const qtdContratada = Number(p.quantidade_disponivel || p.demandas?.quantidade || 0)
+      const valorTotalContrato = valorUnitario * (qtdContratada || 1)
 
       if (isAtivo) {
-        if (p.moeda === 'USD') volumeAtivoUSD += valor
-        else volumeAtivoBRL += valor
+        if (p.moeda === 'USD') volumeAtivoUSD += valorTotalContrato
+        else volumeAtivoBRL += valorTotalContrato
 
         // Agrupa por fornecedor
         const fNome = p.profiles?.nome_empresa || 'Desconhecido'
@@ -46,7 +48,7 @@ export default function IndicadoresBIPage() {
           fornecedorMap[fNome] = { nome: fNome, contratos: 0, totalBRL: 0 }
         }
         fornecedorMap[fNome].contratos += 1
-        fornecedorMap[fNome].totalBRL += p.moeda === 'USD' ? valor * 5.6 : valor // Converte USD para estimativa BRL
+        fornecedorMap[fNome].totalBRL += p.moeda === 'USD' ? valorTotalContrato * 5.6 : valorTotalContrato
       }
 
       // Lista para exportação geral em Excel
@@ -54,31 +56,44 @@ export default function IndicadoresBIPage() {
         'Cotação / Demanda': p.demandas?.titulo || '-',
         'Fornecedor': p.profiles?.nome_empresa || '-',
         'Moeda': p.moeda || 'BRL',
-        'Valor Proposto': valor,
+        'Valor Unitário Proposto': valorUnitario,
+        'Quantidade Contratada': qtdContratada,
+        'Valor Total Estimado': valorTotalContrato,
         'Vencedora': isVencedora ? 'SIM' : 'NÃO',
         'Status Contrato': p.status_contrato || 'N/A',
-        'Quantidade Saldo': p.quantidade_disponivel || 0,
         'Tipo Frete': p.tipo_frete || '-',
         'Cond. Pagamento': p.condicao_pagamento || '-'
       })
     })
 
-    // Cálculo do Saving separando BRL e USD (Diferença entre a maior proposta e a vencedora)
+    // --- CÁLCULO DE SAVING CORRIGIDO ---
+    // Regra: (Maior Preço Unitário - Preço Unitário Vencedor) * Quantidade Fechada
     demandas?.forEach(d => {
-      if (d.propostas && d.propostas.length > 1) {
-        const vencedora = d.propostas.find((p: any) => p.vencedora)
-        const maiorVal = Math.max(...d.propostas.map((p: any) => Number(p.valor_total || 0)))
-        
-        if (vencedora) {
-          const economia = maiorVal - Number(vencedora.valor_total || 0)
-          if (economia > 0) {
+      if (d.propostas && d.propostas.length > 0) {
+        // Encontra o MAIOR preço unitário cotado para esta demanda
+        const maiorPrecoUnitario = Math.max(...d.propostas.map((p: any) => Number(p.valor_total || 0)))
+
+        // Filtra todas as propostas marcadas como vencedoras nesta demanda
+        const vencedoras = d.propostas.filter((p: any) => p.vencedora)
+
+        vencedoras.forEach((vencedora: any) => {
+          const precoVencedor = Number(vencedora.valor_total || 0)
+          
+          // Pega a quantidade fechada com este vencedor
+          const qtdFechada = Number(vencedora.quantidade_disponivel || d.quantidade || 0)
+
+          const diferencaUnitarias = maiorPrecoUnitario - precoVencedor
+
+          if (diferencaUnitarias > 0 && qtdFechada > 0) {
+            const economiaTotal = diferencaUnitarias * qtdFechada
+
             if (vencedora.moeda === 'USD') {
-              totalSavingUSD += economia
+              totalSavingUSD += economiaTotal
             } else {
-              totalSavingBRL += economia
+              totalSavingBRL += economiaTotal
             }
           }
-        }
+        })
       }
     })
 
@@ -135,7 +150,7 @@ export default function IndicadoresBIPage() {
           
           {/* Cartão de Saving Corrigido */}
           <div className="bg-white/95 backdrop-blur-md p-5 rounded-xl border border-white/20 shadow-xl">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Saving Estimado (Economia)</span>
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Saving Real (Economia)</span>
             
             {metrics?.totalSavingUSD > 0 && (
               <p className="text-xl font-black text-green-700 mt-2">
@@ -153,7 +168,7 @@ export default function IndicadoresBIPage() {
               <p className="text-2xl font-black text-gray-400 mt-2">R$ 0,00</p>
             )}
 
-            <span className="text-[10px] text-gray-400 mt-1 block">Diferença vs. maior proposta recebida</span>
+            <span className="text-[10px] text-gray-400 mt-1 block">Calculado sobre a quantidade fechada vs. maior proposta</span>
           </div>
 
           <div className="bg-white/95 backdrop-blur-md p-5 rounded-xl border border-white/20 shadow-xl">
